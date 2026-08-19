@@ -177,6 +177,16 @@
     font-size: 14px;
     padding: 30px 0;
   }
+
+  .error {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fee2e2;
+    color: var(--danger-hover);
+    font-size: 13px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -193,60 +203,119 @@
       </div>
       <ul class="list" id="list"></ul>
       <div class="empty" id="emptyMsg" style="display:none;">목록이 비어있습니다. 물건을 추가해 보세요!</div>
+      <div class="error" id="errorMsg" style="display:none;"></div>
     </div>
   </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
-  const STORAGE_KEY = 'shopping-list-items';
+  const SUPABASE_URL = 'https://ocshjrmzaonujnqizcac.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_uK-AlvFYfCA4fF1syo2_0g_k8pmR3Y-';
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const TABLE = 'shopping_items';
 
   const listEl = document.getElementById('list');
   const inputEl = document.getElementById('itemInput');
   const addBtn = document.getElementById('addBtn');
   const countText = document.getElementById('countText');
   const emptyMsg = document.getElementById('emptyMsg');
+  const errorMsg = document.getElementById('errorMsg');
   const clearDoneBtn = document.getElementById('clearDoneBtn');
 
-  let items = loadItems();
+  let items = [];
 
-  function loadItems() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
+  function showError(message) {
+    errorMsg.textContent = message;
+    errorMsg.style.display = 'block';
+  }
+
+  function clearError() {
+    errorMsg.style.display = 'none';
+  }
+
+  async function loadItems() {
+    const { data, error } = await supabaseClient
+      .from(TABLE)
+      .select('*')
+      .order('id', { ascending: true });
+
+    if (error) {
+      showError('목록을 불러오지 못했습니다: ' + error.message);
+      return;
     }
+    clearError();
+    items = data;
+    render();
   }
 
-  function saveItems() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  }
-
-  function addItem(text) {
+  async function addItem(text) {
     const trimmed = text.trim();
     if (!trimmed) return;
-    items.push({ id: Date.now() + Math.random(), text: trimmed, done: false });
-    saveItems();
-    render();
-  }
 
-  function toggleItem(id) {
-    const item = items.find(i => i.id === id);
-    if (item) {
-      item.done = !item.done;
-      saveItems();
-      render();
+    const { data, error } = await supabaseClient
+      .from(TABLE)
+      .insert({ text: trimmed, done: false })
+      .select()
+      .single();
+
+    if (error) {
+      showError('추가하지 못했습니다: ' + error.message);
+      return;
     }
-  }
-
-  function deleteItem(id) {
-    items = items.filter(i => i.id !== id);
-    saveItems();
+    clearError();
+    items.push(data);
     render();
   }
 
-  function clearDone() {
+  async function toggleItem(id) {
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+
+    const nextDone = !item.done;
+    const { error } = await supabaseClient
+      .from(TABLE)
+      .update({ done: nextDone })
+      .eq('id', id);
+
+    if (error) {
+      showError('업데이트하지 못했습니다: ' + error.message);
+      return;
+    }
+    clearError();
+    item.done = nextDone;
+    render();
+  }
+
+  async function deleteItem(id) {
+    const { error } = await supabaseClient
+      .from(TABLE)
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      showError('삭제하지 못했습니다: ' + error.message);
+      return;
+    }
+    clearError();
+    items = items.filter(i => i.id !== id);
+    render();
+  }
+
+  async function clearDone() {
+    const doneIds = items.filter(i => i.done).map(i => i.id);
+    if (doneIds.length === 0) return;
+
+    const { error } = await supabaseClient
+      .from(TABLE)
+      .delete()
+      .in('id', doneIds);
+
+    if (error) {
+      showError('완료 항목을 지우지 못했습니다: ' + error.message);
+      return;
+    }
+    clearError();
     items = items.filter(i => !i.done);
-    saveItems();
     render();
   }
 
@@ -289,22 +358,24 @@
     countText.textContent = `전체 ${items.length}개 · 완료 ${doneCount}개`;
   }
 
-  addBtn.addEventListener('click', () => {
-    addItem(inputEl.value);
+  addBtn.addEventListener('click', async () => {
+    const value = inputEl.value;
     inputEl.value = '';
+    await addItem(value);
     inputEl.focus();
   });
 
-  inputEl.addEventListener('keydown', (e) => {
+  inputEl.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
-      addItem(inputEl.value);
+      const value = inputEl.value;
       inputEl.value = '';
+      await addItem(value);
     }
   });
 
   clearDoneBtn.addEventListener('click', clearDone);
 
-  render();
+  loadItems();
 </script>
 </body>
 </html>
